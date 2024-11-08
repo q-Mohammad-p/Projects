@@ -72,13 +72,6 @@ public:
         if (!sign)
             cout << '-';
         cout << Digits;
-//        if (numberOfDigits == 0) {
-//            cout << 0;
-//            return;
-//        }
-//        for (int i = 0; i < numberOfDigits; i++) {
-//            cout << Digits[i];
-//        }
     }
 };
 

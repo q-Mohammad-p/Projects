@@ -285,6 +285,8 @@ bigNumber operator*(bigNumber &big1, bigNumber &big2) {
 
     bigNumber answer(p + q + r, s);
 
+    remove_Zero(big1);
+    remove_Zero(big2);
     remove_Zero(answer);
     return (answer);
 }
@@ -395,6 +397,7 @@ bigNumber operator/(const bigNumber &big1, const bigNumber &big2) {
             temp.erase(0, count);
         bigNumber temp2(temp);
         while (temp2 >= b) {
+//    cout<<"1";
             temp2 = temp2 - b;
             num++;
         }
