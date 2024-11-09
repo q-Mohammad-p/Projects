@@ -9,5 +9,6 @@ int main() {
     (a+b).print();cout<<endl;
     (a*b).print();cout<<endl;
     (a/b).print();cout<<endl;
+    power(b,10).print();cout<<endl;
     mult(a,b).print();
 }
