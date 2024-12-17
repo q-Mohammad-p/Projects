@@ -6,6 +6,8 @@
 
 using namespace std;
 
+class exp1 {
+};
 
 bool pre(char op_1, char op_2) {
     if (op_1 == op_2 and op_1 != '(')
@@ -57,9 +59,11 @@ float parametric_post_calculator(string str, float value) {
                 s.push(num2 - num1);
             else if (str[i] == '*')
                 s.push(num2 * num1);
-            else if (str[i] == '/')
+            else if (str[i] == '/') {
+                if (num1 == 0)
+                    throw exp1();
                 s.push(num2 / num1);
-            else if (str[i] == '^')
+            } else if (str[i] == '^')
                 s.push(pow(num2, num1));
             i++;
             temp = "";
@@ -118,16 +122,17 @@ float calculator_post(string str) {
             catch (stack<float>::is_empty) {
 
             }
-//            cout << num1 << "  " << num2 << endl;
             if (str[i] == '+')
                 s.push(num2 + num1);
             else if (str[i] == '-')
                 s.push(num2 - num1);
             else if (str[i] == '*')
                 s.push(num2 * num1);
-            else if (str[i] == '/')
+            else if (str[i] == '/') {
+                if (num2 == 0)
+                    throw exp1();
                 s.push(num2 / num1);
-            else if (str[i] == '^')
+            } else if (str[i] == '^')
                 s.push(pow(num2, num1));
             i++;
             temp = "";
@@ -261,19 +266,16 @@ float parametric_pre_calculator(string str, float value) {
 
             }
             if (str[i] == '+') {
-                cout << num1 + num2 << endl;
                 s.push(num1 + num2);
             } else if (str[i] == '-') {
-                cout << num1 - num2 << endl;
                 s.push(num1 - num2);
             } else if (str[i] == '*') {
-                cout << num1 * num2 << endl;
                 s.push(num1 * num2);
             } else if (str[i] == '/') {
-                cout << num1 / num2 << endl;
+                if (num2 == 0)
+                    throw exp1();
                 s.push(num1 / num2);
             } else if (str[i] == '^') {
-                cout << pow(num1, num2) << endl;
                 s.push(pow(num1, num2));
             }
             i--;
@@ -290,7 +292,7 @@ float parametric_pre_calculator(string str, float value) {
 }
 
 
-void convert_to_pre(string str) {
+string convert_to_pre(string str) {
     string result;
     stack<string> operand(str.length());
     stack<char> Operator(str.length());
@@ -370,6 +372,7 @@ void convert_to_pre(string str) {
     }
     string s = operand.pop();
     cout << s << endl;
+    return s;
 }
 
 
@@ -399,7 +402,7 @@ int main() {
     if (p) {
         cout << "Do you want to draw a plot ? ";
         cin >> q;
-        if (q == 'y') {
+        if (q == 'y' or q == 'Y') {
             cout << "Enter a bound : \n";
             int number1, number2;
             cout << "Number 1 : ";
@@ -407,15 +410,19 @@ int main() {
             cout << "Number 2 : ";
             cin >> number2;
 
+            StringReference *e;
             RGBABitmapImageReference *imageRef = CreateRGBABitmapImageReference();
             vector<double> x;
             vector<double> y;
-            for (int i = number1; i <= number2; ++i) {
-                x.push_back(i);
-                y.push_back(parametric_post_calculator(result, i));
+            for (float i = number1; i <= number2; i = i + 0.5) {
+                try {
+                    y.push_back((double) parametric_post_calculator(result, i));
+                    x.push_back(i);
+                }
+                catch (exp1) {};
             }
 
-            DrawScatterPlot(imageRef, 1920, 1080, &x, &y);
+            DrawScatterPlot(imageRef, 1920, 1080, &x, &y, e);
 
             vector<double> *pngData = ConvertToPNG(imageRef->image);
             WriteToFile(pngData, "plot_post.png");

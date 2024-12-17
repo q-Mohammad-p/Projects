@@ -2,6 +2,12 @@
 
 #include "pbPlots.hpp"
 
+using namespace std;
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 bool CropLineWithinBoundary(NumberReference *x1Ref, NumberReference *y1Ref, NumberReference *x2Ref, NumberReference *y2Ref, double xMin, double xMax, double yMin, double yMax){
   double x1, y1, x2, y2;
   bool success, p1In, p2In;
@@ -439,10 +445,50 @@ double MapXCoordinate(double x, double xMin, double xMax, double xPixelMin, doub
   return x;
 }
 double MapXCoordinateAutoSettings(double x, RGBABitmapImage *image, vector<double> *xs){
-  return MapXCoordinate(x, GetMinimum(xs), GetMaximum(xs) - GetMinimum(xs), GetDefaultPaddingPercentage()*ImageWidth(image), (1.0 - GetDefaultPaddingPercentage())*ImageWidth(image));
+  return MapXCoordinate(x, GetMinimum(xs), GetMaximum(xs), GetDefaultPaddingPercentage()*ImageWidth(image), (1.0 - GetDefaultPaddingPercentage())*ImageWidth(image));
 }
 double MapYCoordinateAutoSettings(double y, RGBABitmapImage *image, vector<double> *ys){
   return MapYCoordinate(y, GetMinimum(ys), GetMaximum(ys), GetDefaultPaddingPercentage()*ImageHeight(image), (1.0 - GetDefaultPaddingPercentage())*ImageHeight(image));
+}
+double MapXCoordinateBasedOnSettings(double x, ScatterPlotSettings *settings){
+  double xMin, xMax, xPadding, xPixelMin, xPixelMax;
+  Rectangle *boundaries;
+
+  boundaries = new Rectangle();
+  ComputeBoundariesBasedOnSettings(settings, boundaries);
+  xMin = boundaries->x1;
+  xMax = boundaries->x2;
+
+  if(settings->autoPadding){
+    xPadding = floor(GetDefaultPaddingPercentage()*settings->width);
+  }else{
+    xPadding = settings->xPadding;
+  }
+
+  xPixelMin = xPadding;
+  xPixelMax = settings->width - xPadding;
+
+  return MapXCoordinate(x, xMin, xMax, xPixelMin, xPixelMax);
+}
+double MapYCoordinateBasedOnSettings(double y, ScatterPlotSettings *settings){
+  double yMin, yMax, yPadding, yPixelMin, yPixelMax;
+  Rectangle *boundaries;
+
+  boundaries = new Rectangle();
+  ComputeBoundariesBasedOnSettings(settings, boundaries);
+  yMin = boundaries->y1;
+  yMax = boundaries->y2;
+
+  if(settings->autoPadding){
+    yPadding = floor(GetDefaultPaddingPercentage()*settings->height);
+  }else{
+    yPadding = settings->yPadding;
+  }
+
+  yPixelMin = yPadding;
+  yPixelMax = settings->height - yPadding;
+
+  return MapYCoordinate(y, yMin, yMax, yPixelMin, yPixelMax);
 }
 double GetDefaultPaddingPercentage(){
   return 0.10;
@@ -481,8 +527,8 @@ ScatterPlotSettings *GetDefaultScatterPlotSettings(){
   settings->xPadding = 0.0;
   settings->yPadding = 0.0;
   settings->title = toVector(L"");
-  settings->yLabel = toVector(L"");
   settings->xLabel = toVector(L"");
+  settings->yLabel = toVector(L"");
   settings->scatterPlotSeries = new vector<ScatterPlotSeries*> (0.0);
   settings->showGrid = true;
   settings->gridColor = GetGray(0.1);
@@ -510,8 +556,9 @@ ScatterPlotSeries *GetDefaultScatterPlotSeriesSettings(){
 
   return series;
 }
-void DrawScatterPlot(RGBABitmapImageReference *canvasReference, double width, double height, vector<double> *xs, vector<double> *ys){
+bool DrawScatterPlot(RGBABitmapImageReference *canvasReference, double width, double height, vector<double> *xs, vector<double> *ys, StringReference *errorMessage){
   ScatterPlotSettings *settings;
+  bool success;
 
   settings = GetDefaultScatterPlotSettings();
 
@@ -524,10 +571,13 @@ void DrawScatterPlot(RGBABitmapImageReference *canvasReference, double width, do
   delete settings->scatterPlotSeries->at(0)->ys;
   settings->scatterPlotSeries->at(0)->ys = ys;
 
-  DrawScatterPlotFromSettings(canvasReference, settings);
+  success = DrawScatterPlotFromSettings(canvasReference, settings, errorMessage);
+
+  return success;
 }
-bool DrawScatterPlotFromSettings(RGBABitmapImageReference *canvasReference, ScatterPlotSettings *settings){
+bool DrawScatterPlotFromSettings(RGBABitmapImageReference *canvasReference, ScatterPlotSettings *settings, StringReference *errorMessage){
   double xMin, xMax, yMin, yMax, xLength, yLength, i, x, y, xPrev, yPrev, px, py, pxPrev, pyPrev, originX, originY, p, l, plot;
+  Rectangle *boundaries;
   double xPadding, yPadding, originXPixels, originYPixels;
   double xPixelMin, yPixelMin, xPixelMax, yPixelMax, xLengthPixels, yLengthPixels, axisLabelPadding;
   NumberReference *nextRectangle, *x1Ref, *y1Ref, *x2Ref, *y2Ref, *patternOffset;
@@ -548,57 +598,47 @@ bool DrawScatterPlotFromSettings(RGBABitmapImageReference *canvasReference, Scat
   canvas = CreateImage(settings->width, settings->height, GetWhite());
   patternOffset = CreateNumberReference(0.0);
 
-  success = ScatterPlotFromSettingsValid(settings);
+  success = ScatterPlotFromSettingsValid(settings, errorMessage);
 
   if(success){
 
-    if(settings->scatterPlotSeries->size() >= 1.0){
-      xMin = GetMinimum(settings->scatterPlotSeries->at(0)->xs);
-      xMax = GetMaximum(settings->scatterPlotSeries->at(0)->xs);
-      yMin = GetMinimum(settings->scatterPlotSeries->at(0)->ys);
-      yMax = GetMaximum(settings->scatterPlotSeries->at(0)->ys);
-    }else{
-      xMin =  -10.0;
+    boundaries = new Rectangle();
+    ComputeBoundariesBasedOnSettings(settings, boundaries);
+    xMin = boundaries->x1;
+    yMin = boundaries->y1;
+    xMax = boundaries->x2;
+    yMax = boundaries->y2;
+
+    /* If zero, set to defaults. */
+    if(xMin - xMax == 0.0){
+      xMin = 0.0;
       xMax = 10.0;
-      yMin =  -10.0;
-      yMax = 10.0;
     }
 
-    if( !settings->autoBoundaries ){
-      xMin = settings->xMin;
-      xMax = settings->xMax;
-      yMin = settings->yMin;
-      yMax = settings->yMax;
-    }else{
-      for(plot = 1.0; plot < settings->scatterPlotSeries->size(); plot = plot + 1.0){
-        sp = settings->scatterPlotSeries->at(plot);
-
-        xMin = fmin(xMin, GetMinimum(sp->xs));
-        xMax = fmax(xMax, GetMaximum(sp->xs));
-        yMin = fmin(yMin, GetMinimum(sp->ys));
-        yMax = fmax(yMax, GetMaximum(sp->ys));
-      }
+    if(yMin - yMax == 0.0){
+      yMin = 0.0;
+      yMax = 10.0;
     }
 
     xLength = xMax - xMin;
     yLength = yMax - yMin;
 
     if(settings->autoPadding){
-      xPadding = floor(GetDefaultPaddingPercentage()*ImageWidth(canvas));
-      yPadding = floor(GetDefaultPaddingPercentage()*ImageHeight(canvas));
+      xPadding = floor(GetDefaultPaddingPercentage()*settings->width);
+      yPadding = floor(GetDefaultPaddingPercentage()*settings->height);
     }else{
       xPadding = settings->xPadding;
       yPadding = settings->yPadding;
     }
 
     /* Draw title */
-    DrawText(canvas, floor(ImageWidth(canvas)/2.0 - GetTextWidth(settings->title)/2.0), floor(yPadding/3.0), settings->title, GetBlack());
+    DrawText(canvas, floor(settings->width/2.0 - GetTextWidth(settings->title)/2.0), floor(yPadding/3.0), settings->title, GetBlack());
 
     /* Draw grid */
     xPixelMin = xPadding;
     yPixelMin = yPadding;
-    xPixelMax = ImageWidth(canvas) - xPadding;
-    yPixelMax = ImageHeight(canvas) - yPadding;
+    xPixelMax = settings->width - xPadding;
+    yPixelMax = settings->height - yPadding;
     xLengthPixels = xPixelMax - xPixelMin;
     yLengthPixels = yPixelMax - yPixelMin;
     DrawRectangle1px(canvas, xPixelMin, yPixelMin, xLengthPixels, yLengthPixels, settings->gridColor);
@@ -718,8 +758,8 @@ if(settings->yAxisLeft){
     }
 
     /* Draw origin axis titles. */
-    DrawTextUpwards(canvas, 10.0, floor(originTextYPixels - GetTextWidth(settings->xLabel)/2.0), settings->xLabel, GetBlack());
-    DrawText(canvas, floor(originTextXPixels - GetTextWidth(settings->yLabel)/2.0), yPixelMax + axisLabelPadding, settings->yLabel, GetBlack());
+    DrawTextUpwards(canvas, 10.0, floor(originTextYPixels - GetTextWidth(settings->yLabel)/2.0), settings->yLabel, GetBlack());
+    DrawText(canvas, floor(originTextXPixels - GetTextWidth(settings->xLabel)/2.0), yPixelMax + axisLabelPadding, settings->xLabel, GetBlack());
 
     /* X-grid-markers */
     for(i = 0.0; i < xGridPositions->size(); i = i + 1.0){
@@ -854,13 +894,49 @@ if(settings->yAxisLeft){
       }
     }
 
-    DeleteImage(canvasReference->image);
     canvasReference->image = canvas;
   }
 
   return success;
 }
-bool ScatterPlotFromSettingsValid(ScatterPlotSettings *settings){
+void ComputeBoundariesBasedOnSettings(ScatterPlotSettings *settings, Rectangle *boundaries){
+  ScatterPlotSeries *sp;
+  double plot, xMin, xMax, yMin, yMax;
+
+  if(settings->scatterPlotSeries->size() >= 1.0){
+    xMin = GetMinimum(settings->scatterPlotSeries->at(0)->xs);
+    xMax = GetMaximum(settings->scatterPlotSeries->at(0)->xs);
+    yMin = GetMinimum(settings->scatterPlotSeries->at(0)->ys);
+    yMax = GetMaximum(settings->scatterPlotSeries->at(0)->ys);
+  }else{
+    xMin =  -10.0;
+    xMax = 10.0;
+    yMin =  -10.0;
+    yMax = 10.0;
+  }
+
+  if( !settings->autoBoundaries ){
+    xMin = settings->xMin;
+    xMax = settings->xMax;
+    yMin = settings->yMin;
+    yMax = settings->yMax;
+  }else{
+    for(plot = 1.0; plot < settings->scatterPlotSeries->size(); plot = plot + 1.0){
+      sp = settings->scatterPlotSeries->at(plot);
+
+      xMin = fmin(xMin, GetMinimum(sp->xs));
+      xMax = fmax(xMax, GetMaximum(sp->xs));
+      yMin = fmin(yMin, GetMinimum(sp->ys));
+      yMax = fmax(yMax, GetMaximum(sp->ys));
+    }
+  }
+
+  boundaries->x1 = xMin;
+  boundaries->y1 = yMin;
+  boundaries->x2 = xMax;
+  boundaries->y2 = yMax;
+}
+bool ScatterPlotFromSettingsValid(ScatterPlotSettings *settings, StringReference *errorMessage){
   bool success, found;
   ScatterPlotSeries *series;
   double i;
@@ -871,18 +947,22 @@ bool ScatterPlotFromSettingsValid(ScatterPlotSettings *settings){
   if( !settings->xAxisAuto ){
     if(settings->xAxisTop && settings->xAxisBottom){
       success = false;
+      errorMessage->string = toVector(L"x-axis not automatic and configured to be both on top and on bottom.");
     }
     if( !settings->xAxisTop  &&  !settings->xAxisBottom ){
       success = false;
+      errorMessage->string = toVector(L"x-axis not automatic and configured to be neither on top nor on bottom.");
     }
   }
 
   if( !settings->yAxisAuto ){
     if(settings->yAxisLeft && settings->yAxisRight){
       success = false;
+      errorMessage->string = toVector(L"y-axis not automatic and configured to be both on top and on bottom.");
     }
     if( !settings->yAxisLeft  &&  !settings->yAxisRight ){
       success = false;
+      errorMessage->string = toVector(L"y-axis not automatic and configured to be neither on top nor on bottom.");
     }
   }
 
@@ -891,12 +971,15 @@ bool ScatterPlotFromSettingsValid(ScatterPlotSettings *settings){
     series = settings->scatterPlotSeries->at(i);
     if(series->xs->size() != series->ys->size()){
       success = false;
+      errorMessage->string = toVector(L"x and y series must be of the same length.");
     }
     if(series->xs->size() == 0.0){
       success = false;
+      errorMessage->string = toVector(L"There must be data in the series to be plotted.");
     }
     if(series->linearInterpolation && series->xs->size() == 1.0){
       success = false;
+      errorMessage->string = toVector(L"Linear interpolation requires at least two data points to be plotted.");
     }
   }
 
@@ -904,9 +987,11 @@ bool ScatterPlotFromSettingsValid(ScatterPlotSettings *settings){
   if( !settings->autoBoundaries ){
     if(settings->xMin >= settings->xMax){
       success = false;
+      errorMessage->string = toVector(L"x min is higher than or equal to x max.");
     }
     if(settings->yMin >= settings->yMax){
       success = false;
+      errorMessage->string = toVector(L"y min is higher than or equal to y max.");
     }
   }
 
@@ -914,18 +999,22 @@ bool ScatterPlotFromSettingsValid(ScatterPlotSettings *settings){
   if( !settings->autoPadding ){
     if(2.0*settings->xPadding >= settings->width){
       success = false;
+      errorMessage->string = toVector(L"The x padding is more then the width.");
     }
     if(2.0*settings->yPadding >= settings->height){
       success = false;
+      errorMessage->string = toVector(L"The y padding is more then the height.");
     }
   }
 
   /* Check width and height. */
   if(settings->width < 0.0){
     success = false;
+    errorMessage->string = toVector(L"The width is less than 0.");
   }
   if(settings->height < 0.0){
     success = false;
+    errorMessage->string = toVector(L"The height is less than 0.");
   }
 
   /* Check point types. */
@@ -934,6 +1023,7 @@ bool ScatterPlotFromSettingsValid(ScatterPlotSettings *settings){
 
     if(series->lineThickness < 0.0){
       success = false;
+      errorMessage->string = toVector(L"The line thickness is less than 0.");
     }
 
     if( !series->linearInterpolation ){
@@ -954,6 +1044,7 @@ bool ScatterPlotFromSettingsValid(ScatterPlotSettings *settings){
       }
       if( !found ){
         success = false;
+        errorMessage->string = toVector(L"The point type is unknown.");
       }
     }else{
       /* Line type. */
@@ -974,6 +1065,7 @@ bool ScatterPlotFromSettingsValid(ScatterPlotSettings *settings){
 
       if( !found ){
         success = false;
+        errorMessage->string = toVector(L"The line type is unknown.");
       }
     }
   }
@@ -1026,32 +1118,46 @@ BarPlotSeries *GetDefaultBarPlotSeriesSettings(){
 
   return series;
 }
-RGBABitmapImage *DrawBarPlot(double width, double height, vector<double> *ys){
-  BarPlotSettings *settings;
+RGBABitmapImage *DrawBarPlotNoErrorCheck(double width, double height, vector<double> *ys){
+  StringReference *errorMessage;
+  bool success;
   RGBABitmapImageReference *canvasReference;
 
+  errorMessage = new StringReference();
+  canvasReference = CreateRGBABitmapImageReference();
+
+  success = DrawBarPlot(canvasReference, width, height, ys, errorMessage);
+
+  FreeStringReference(errorMessage);
+
+  return canvasReference->image;
+}
+bool DrawBarPlot(RGBABitmapImageReference *canvasReference, double width, double height, vector<double> *ys, StringReference *errorMessage){
+  BarPlotSettings *settings;
+  bool success;
+
+  errorMessage = new StringReference();
   settings = GetDefaultBarPlotSettings();
 
   settings->barPlotSeries = new vector<BarPlotSeries*> (1.0);
   settings->barPlotSeries->at(0) = GetDefaultBarPlotSeriesSettings();
   delete settings->barPlotSeries->at(0)->ys;
   settings->barPlotSeries->at(0)->ys = ys;
-  canvasReference = new RGBABitmapImageReference();
   settings->width = width;
   settings->height = height;
 
-  DrawBarPlotFromSettings(canvasReference, settings);
+  success = DrawBarPlotFromSettings(canvasReference, settings, errorMessage);
 
-  return canvasReference->image;
+  return success;
 }
-bool DrawBarPlotFromSettings(RGBABitmapImageReference *canvasReference, BarPlotSettings *settings){
+bool DrawBarPlotFromSettings(RGBABitmapImageReference *canvasReference, BarPlotSettings *settings, StringReference *errorMessage){
   double xPadding, yPadding;
   double xPixelMin, yPixelMin, yPixelMax, xPixelMax;
   double xLengthPixels, yLengthPixels;
   double s, n, y, x, w, h, yMin, yMax, b, i, py, yValue;
   vector<RGBA*> *colors;
   vector<double> *ys, *yGridPositions;
-  double yTop, yBottom, ss, bs, yLength;
+  double yTop, yBottom, ss, bs;
   double groupSeparation, barSeparation, barWidth, textwidth;
   StringArrayReference *yLabels;
   NumberArrayReference *yLabelPriorities;
@@ -1062,10 +1168,9 @@ bool DrawBarPlotFromSettings(RGBABitmapImageReference *canvasReference, BarPlotS
   bool success;
   RGBABitmapImage *canvas;
 
-  success = BarPlotSettingsIsValid(settings);
+  success = BarPlotSettingsIsValid(settings, errorMessage);
 
   if(success){
-
     canvas = CreateImage(settings->width, settings->height, GetWhite());
 
     ss = settings->barPlotSeries->size();
@@ -1102,7 +1207,6 @@ bool DrawBarPlotFromSettings(RGBABitmapImageReference *canvasReference, BarPlotS
       yMin = settings->yMin;
       yMax = settings->yMax;
     }
-    yLength = yMax - yMin;
 
     /* boundaries */
     xPixelMin = xPadding;
@@ -1255,10 +1359,10 @@ bool DrawBarPlotFromSettings(RGBABitmapImageReference *canvasReference, BarPlotS
 
   return success;
 }
-bool BarPlotSettingsIsValid(BarPlotSettings *settings){
+bool BarPlotSettingsIsValid(BarPlotSettings *settings, StringReference *errorMessage){
   bool success, lengthSet;
   BarPlotSeries *series;
-  double i, width, height, length;
+  double i, length;
 
   success = true;
 
@@ -1273,6 +1377,7 @@ bool BarPlotSettingsIsValid(BarPlotSettings *settings){
       lengthSet = true;
     }else if(length != series->ys->size()){
       success = false;
+      errorMessage->string = toVector(L"The number of data points must be equal for all series.");
     }
   }
 
@@ -1280,6 +1385,7 @@ bool BarPlotSettingsIsValid(BarPlotSettings *settings){
   if( !settings->autoBoundaries ){
     if(settings->yMin >= settings->yMax){
       success = false;
+      errorMessage->string = toVector(L"Minimum y lower than maximum y.");
     }
   }
 
@@ -1287,27 +1393,33 @@ bool BarPlotSettingsIsValid(BarPlotSettings *settings){
   if( !settings->autoPadding ){
     if(2.0*settings->xPadding >= settings->width){
       success = false;
+      errorMessage->string = toVector(L"Double the horizontal padding is larger than or equal to the width.");
     }
     if(2.0*settings->yPadding >= settings->height){
       success = false;
+      errorMessage->string = toVector(L"Double the vertical padding is larger than or equal to the height.");
     }
   }
 
   /* Check width and height. */
   if(settings->width < 0.0){
     success = false;
+    errorMessage->string = toVector(L"Width lower than zero.");
   }
   if(settings->height < 0.0){
     success = false;
+    errorMessage->string = toVector(L"Height lower than zero.");
   }
 
   /* Check spacing */
   if( !settings->autoSpacing ){
     if(settings->groupSeparation < 0.0){
       success = false;
+      errorMessage->string = toVector(L"Group separation lower than zero.");
     }
     if(settings->barSeparation < 0.0){
       success = false;
+      errorMessage->string = toVector(L"Bar separation lower than zero.");
     }
   }
 
@@ -1337,7 +1449,6 @@ double RoundToDigits(double element, double digitsAfterPoint){
   return Round(element*pow(10.0, digitsAfterPoint))/pow(10.0, digitsAfterPoint);
 }
 double test(){
-  ScatterPlotSettings *scatterPlotSettings;
   double z;
   vector<double> *gridlines;
   NumberReference *failures;
@@ -1345,12 +1456,13 @@ double test(){
   NumberArrayReference *labelPriorities;
   RGBABitmapImageReference *imageReference;
   vector<double> *xs, *ys;
+  StringReference *errorMessage;
+  bool success;
 
   failures = CreateNumberReference(0.0);
+  errorMessage = CreateStringReference(toVector(L""));
 
   imageReference = CreateRGBABitmapImageReference();
-
-  scatterPlotSettings = GetDefaultScatterPlotSettings();
 
   labels = new StringArrayReference();
   labelPriorities = new NumberArrayReference();
@@ -1403,11 +1515,256 @@ double test(){
   ys->at(2) =  -2.0;
   ys->at(3) =  -1.0;
   ys->at(4) = 2.0;
-  DrawScatterPlot(imageReference, 800.0, 600.0, xs, ys);
+  success = DrawScatterPlot(imageReference, 800.0, 600.0, xs, ys, errorMessage);
 
-  imageReference->image = DrawBarPlot(800.0, 600.0, ys);
+  AssertTrue(success, failures);
+
+  if(success){
+    success = DrawBarPlot(imageReference, 800.0, 600.0, ys, errorMessage);
+
+    AssertTrue(success, failures);
+
+    if(success){
+      TestMapping(failures);
+      TestMapping2(failures);
+    }
+  }
 
   return failures->numberValue;
+}
+void TestMapping(NumberReference *failures){
+  ScatterPlotSeries *series;
+  ScatterPlotSettings *settings;
+  RGBABitmapImageReference *imageReference;
+  double x1, y1;
+  StringReference *errorMessage;
+  bool success;
+
+  errorMessage = CreateStringReference(toVector(L""));
+
+  series = GetDefaultScatterPlotSeriesSettings();
+
+  series->xs = new vector<double> (5.0);
+  series->xs->at(0) = -2.0;
+  series->xs->at(1) = -1.0;
+  series->xs->at(2) = 0.0;
+  series->xs->at(3) = 1.0;
+  series->xs->at(4) = 2.0;
+  series->ys = new vector<double> (5.0);
+  series->ys->at(0) = -2.0;
+  series->ys->at(1) = -1.0;
+  series->ys->at(2) = -2.0;
+  series->ys->at(3) = -1.0;
+  series->ys->at(4) = 2.0;
+  series->linearInterpolation = true;
+  series->lineType = toVector(L"dashed");
+  series->lineThickness = 2.0;
+  series->color = GetGray(0.3);
+
+  settings = GetDefaultScatterPlotSettings();
+  settings->width = 600.0;
+  settings->height = 400.0;
+  settings->autoBoundaries = true;
+  settings->autoPadding = true;
+  settings->title = toVector(L"x^2 - 2");
+  settings->xLabel = toVector(L"X axis");
+  settings->yLabel = toVector(L"Y axis");
+  settings->scatterPlotSeries = new vector<ScatterPlotSeries*> (1.0);
+  settings->scatterPlotSeries->at(0) = series;
+
+  imageReference = CreateRGBABitmapImageReference();
+  success = DrawScatterPlotFromSettings(imageReference, settings, errorMessage);
+
+  AssertTrue(success, failures);
+
+  if(success){
+    x1 = MapXCoordinateAutoSettings( -1.0, imageReference->image, series->xs);
+    y1 = MapYCoordinateAutoSettings( -1.0, imageReference->image, series->ys);
+
+    AssertEquals(x1, 180.0, failures);
+    AssertEquals(y1, 280.0, failures);
+  }
+}
+void TestMapping2(NumberReference *failures){
+  vector<double> *xs, *ys, *xs2, *ys2;
+  double i, x, y, w, h, xMin, xMax, yMin, yMax;
+  RGBABitmapImageReference *canvasReference;
+  ScatterPlotSettings *settings;
+  double points;
+  double x1, y1;
+  StringReference *errorMessage;
+  bool success;
+
+  errorMessage = CreateStringReference(toVector(L""));
+
+  points = 300.0;
+  w = 600.0*2.0;
+  h = 300.0*2.0;
+  xMin = 0.0;
+  xMax = 150.0;
+  yMin = 0.0;
+  yMax = 1.0;
+
+  xs = new vector<double> (points);
+  ys = new vector<double> (points);
+  xs2 = new vector<double> (points);
+  ys2 = new vector<double> (points);
+
+  for(i = 0.0; i < points; i = i + 1.0){
+    x = xMin + (xMax - xMin)/(points - 1.0)*i;
+    /* points - 1d is to ensure both extremeties are included. */
+    y = x/(x + 7.0);
+
+    xs->at(i) = x;
+    ys->at(i) = y;
+
+    y = 1.4*x/(x + 7.0)*(1.0 - (atan((x/1.5 - 30.0)/5.0)/1.6 + 1.0)/2.0);
+
+    xs2->at(i) = x;
+    ys2->at(i) = y;
+  }
+
+  settings = GetDefaultScatterPlotSettings();
+
+  settings->scatterPlotSeries = new vector<ScatterPlotSeries*> (2.0);
+  settings->scatterPlotSeries->at(0) = new ScatterPlotSeries();
+  settings->scatterPlotSeries->at(0)->xs = xs;
+  settings->scatterPlotSeries->at(0)->ys = ys;
+  settings->scatterPlotSeries->at(0)->linearInterpolation = true;
+  settings->scatterPlotSeries->at(0)->lineType = toVector(L"solid");
+  settings->scatterPlotSeries->at(0)->lineThickness = 3.0;
+  settings->scatterPlotSeries->at(0)->color = CreateRGBColor(1.0, 0.0, 0.0);
+  settings->scatterPlotSeries->at(1) = new ScatterPlotSeries();
+  settings->scatterPlotSeries->at(1)->xs = xs2;
+  settings->scatterPlotSeries->at(1)->ys = ys2;
+  settings->scatterPlotSeries->at(1)->linearInterpolation = true;
+  settings->scatterPlotSeries->at(1)->lineType = toVector(L"solid");
+  settings->scatterPlotSeries->at(1)->lineThickness = 3.0;
+  settings->scatterPlotSeries->at(1)->color = CreateRGBColor(0.0, 0.0, 1.0);
+  settings->autoBoundaries = false;
+  settings->xMin = xMin;
+  settings->xMax = xMax;
+  settings->yMin = yMin;
+  settings->yMax = yMax;
+  settings->yLabel = toVector(L"");
+  settings->xLabel = toVector(L"Features");
+  settings->title = toVector(L"");
+  settings->width = w;
+  settings->height = h;
+
+  canvasReference = CreateRGBABitmapImageReference();
+
+  success = DrawScatterPlotFromSettings(canvasReference, settings, errorMessage);
+
+  AssertTrue(success, failures);
+
+  if(success){
+    x1 = MapXCoordinateBasedOnSettings(27.0, settings);
+    y1 = MapYCoordinateBasedOnSettings(1.0, settings);
+
+    AssertEquals(floor(x1), 292.0, failures);
+    AssertEquals(y1, 60.0, failures);
+  }
+}
+void ExampleRegression(RGBABitmapImageReference *image){
+  vector<wchar_t> *xsStr, *ysStr;
+  vector<double> *xs, *ys, *xs2, *ys2;
+  StringReference *errorMessage;
+  bool success;
+  ScatterPlotSettings *settings;
+
+  errorMessage = CreateStringReference(toVector(L""));
+
+  xsStr = toVector(L"20.1, 7.1, 16.1, 14.9, 16.7, 8.8, 9.7, 10.3, 22, 16.2, 12.1, 10.3, 14.5, 12.4, 9.6, 12.2, 10.8, 14.7, 19.7, 11.2, 10.1, 11, 12.2, 9.2, 23.5, 9.4, 15.3, 9.6, 11.1, 5.3, 7.8, 25.3, 16.5, 12.6, 12, 11.5, 17.1, 11.2, 12.2, 10.6, 19.9, 14.5, 15.5, 17.4, 8.4, 10.3, 10.2, 12.5, 16.7, 8.5, 12.2");
+  ysStr = toVector(L"31.5, 18.9, 35, 31.6, 22.6, 26.2, 14.1, 24.7, 44.8, 23.2, 31.4, 17.7, 18.4, 23.4, 22.6, 16.4, 21.4, 26.5, 31.7, 11.9, 20, 12.5, 18, 14.2, 37.6, 22.2, 17.8, 18.3, 28, 8.1, 14.7, 37.8, 15.7, 28.6, 11.7, 20.1, 30.1, 18.2, 17.2, 19.6, 29.2, 17.3, 28.2, 38.2, 17.8, 10.4, 19, 16.8, 21.5, 15.9, 17.7");
+
+  xs = StringToNumberArray(xsStr);
+  ys = StringToNumberArray(ysStr);
+
+  settings = GetDefaultScatterPlotSettings();
+
+  settings->scatterPlotSeries = new vector<ScatterPlotSeries*> (2.0);
+  settings->scatterPlotSeries->at(0) = new ScatterPlotSeries();
+  settings->scatterPlotSeries->at(0)->xs = xs;
+  settings->scatterPlotSeries->at(0)->ys = ys;
+  settings->scatterPlotSeries->at(0)->linearInterpolation = false;
+  settings->scatterPlotSeries->at(0)->pointType = toVector(L"dots");
+  settings->scatterPlotSeries->at(0)->color = CreateRGBColor(1.0, 0.0, 0.0);
+
+  /*OrdinaryLeastSquaresWithIntercept(); */
+  xs2 = new vector<double> (2.0);
+  ys2 = new vector<double> (2.0);
+
+  xs2->at(0) = 5.0;
+  ys2->at(0) = 12.0;
+  xs2->at(1) = 25.0;
+  ys2->at(1) = 39.0;
+
+  settings->scatterPlotSeries->at(1) = new ScatterPlotSeries();
+  settings->scatterPlotSeries->at(1)->xs = xs2;
+  settings->scatterPlotSeries->at(1)->ys = ys2;
+  settings->scatterPlotSeries->at(1)->linearInterpolation = true;
+  settings->scatterPlotSeries->at(1)->lineType = toVector(L"solid");
+  settings->scatterPlotSeries->at(1)->lineThickness = 2.0;
+  settings->scatterPlotSeries->at(1)->color = CreateRGBColor(0.0, 0.0, 1.0);
+
+  settings->autoBoundaries = true;
+  settings->yLabel = toVector(L"");
+  settings->xLabel = toVector(L"");
+  settings->title = toVector(L"");
+  settings->width = 600.0;
+  settings->height = 400.0;
+
+  success = DrawScatterPlotFromSettings(image, settings, errorMessage);
+}
+void BarPlotExample(RGBABitmapImageReference *imageReference){
+  vector<double> *ys1, *ys2, *ys3;
+  BarPlotSettings *settings;
+  StringReference *errorMessage;
+  bool success;
+
+  errorMessage = new StringReference();
+
+  ys1 = StringToNumberArray(toVector(L"1, 2, 3, 4, 5"));
+  ys2 = StringToNumberArray(toVector(L"5, 4, 3, 2, 1"));
+  ys3 = StringToNumberArray(toVector(L"10, 2, 4, 3, 4"));
+
+  settings = GetDefaultBarPlotSettings();
+
+  settings->autoBoundaries = true;
+  /*settings.yMax; */
+  /*settings.yMin; */
+  settings->autoPadding = true;
+  /*settings.xPadding; */
+  /*settings.yPadding; */
+  settings->title = toVector(L"title");
+  settings->showGrid = true;
+  settings->gridColor = GetGray(0.1);
+  settings->yLabel = toVector(L"y label");
+  settings->autoColor = true;
+  settings->grayscaleAutoColor = false;
+  settings->autoSpacing = true;
+  /*settings.groupSeparation; */
+  /*settings.barSeparation; */
+  settings->autoLabels = false;
+  settings->xLabels = new vector<StringReference*> (5.0);
+  settings->xLabels->at(0) = CreateStringReference(toVector(L"may 20"));
+  settings->xLabels->at(1) = CreateStringReference(toVector(L"jun 20"));
+  settings->xLabels->at(2) = CreateStringReference(toVector(L"jul 20"));
+  settings->xLabels->at(3) = CreateStringReference(toVector(L"aug 20"));
+  settings->xLabels->at(4) = CreateStringReference(toVector(L"sep 20"));
+  /*settings.colors; */
+  settings->barBorder = true;
+
+  settings->barPlotSeries = new vector<BarPlotSeries*> (3.0);
+  settings->barPlotSeries->at(0) = GetDefaultBarPlotSeriesSettings();
+  settings->barPlotSeries->at(0)->ys = ys1;
+  settings->barPlotSeries->at(1) = GetDefaultBarPlotSeriesSettings();
+  settings->barPlotSeries->at(1)->ys = ys2;
+  settings->barPlotSeries->at(2) = GetDefaultBarPlotSeriesSettings();
+  settings->barPlotSeries->at(2)->ys = ys3;
+
+  success = DrawBarPlotFromSettings(imageReference, settings, errorMessage);
 }
 RGBA *GetBlack(){
   RGBA *black;
@@ -2301,10 +2658,16 @@ RGBA *CreateBlurForPoint(RGBABitmapImage *src, double x, double y, double pixels
   return rgba;
 }
 vector<wchar_t> *CreateStringScientificNotationDecimalFromNumber(double decimal){
+  return CreateStringScientificNotationDecimalFromNumberAllOptions(decimal, false);
+}
+vector<wchar_t> *CreateStringScientificNotationDecimalFromNumber15d2e(double decimal){
+  return CreateStringScientificNotationDecimalFromNumberAllOptions(decimal, true);
+}
+vector<wchar_t> *CreateStringScientificNotationDecimalFromNumberAllOptions(double decimal, bool complete){
   StringReference *mantissaReference, *exponentReference;
-  double multiplier, inc;
+  double multiplier, inc, i, additional;
   double exponent;
-  bool done, isPositive;
+  bool done, isPositive, isPositiveExponent;
   vector<wchar_t> *result;
 
   mantissaReference = new StringReference();
@@ -2339,7 +2702,14 @@ vector<wchar_t> *CreateStringScientificNotationDecimalFromNumber(double decimal)
     }
 
     if( !done ){
-      for(; decimal >= 10.0 || decimal < 1.0; ){
+      exponent = round(log10(decimal));
+      exponent = fmin(99.0, exponent);
+      exponent = fmax( -99.0, exponent);
+
+      decimal = decimal/pow(10.0, exponent);
+
+      /* Adjust */
+      for(; (decimal >= 10.0 || decimal < 1.0) && abs(exponent) < 99.0; ){
         decimal = decimal*multiplier;
         exponent = exponent + inc;
       }
@@ -2348,14 +2718,45 @@ vector<wchar_t> *CreateStringScientificNotationDecimalFromNumber(double decimal)
 
   CreateStringFromNumberWithCheck(decimal, 10.0, mantissaReference);
 
+  isPositiveExponent = exponent >= 0.0;
+  if( !isPositiveExponent ){
+    exponent =  -exponent;
+  }
+
   CreateStringFromNumberWithCheck(exponent, 10.0, exponentReference);
 
   if( !isPositive ){
     result = AppendString(result, toVector(L"-"));
+  }else if(complete){
+    result = AppendString(result, toVector(L"+"));
   }
 
   result = AppendString(result, mantissaReference->string);
+  if(complete){
+    additional = 16.0;
+
+    if(mantissaReference->string->size() == 1.0){
+      result = AppendString(result, toVector(L"."));
+      additional = additional - 1.0;
+    }
+
+    for(i = mantissaReference->string->size(); i < additional; i = i + 1.0){
+      result = AppendString(result, toVector(L"0"));
+    }
+  }
   result = AppendString(result, toVector(L"e"));
+
+  if( !isPositiveExponent ){
+    result = AppendString(result, toVector(L"-"));
+  }else if(complete){
+    result = AppendString(result, toVector(L"+"));
+  }
+
+  if(complete){
+    for(i = exponentReference->string->size(); i < 2.0; i = i + 1.0){
+      result = AppendString(result, toVector(L"0"));
+    }
+  }
   result = AppendString(result, exponentReference->string);
 
   return result;
@@ -2446,6 +2847,8 @@ bool CreateStringFromNumberWithCheck(double decimal, double base, StringReferenc
 
         if(success){
           decimal = decimal - d*pow(base, maximumDigits - i - 1.0);
+          decimal = fmax(decimal, 0.0);
+          decimal = round(decimal);
         }
       }
 
@@ -3660,64 +4063,24 @@ void FreeStringArrayReference(StringArrayReference *stringArrayReference){
   delete stringArrayReference->stringArray;
   delete stringArrayReference;
 }
-vector<wchar_t> *DigitDataBase16(){
-  return toVector(L"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe891412108153069c4ffffffffffffffffffffffffffffffffffffffff9409000000000000000049e7ffffffffffffffffffffffffffffffffff61000000000000000000000017ddffffffffffffffffffffffffffffff840000000573d3f5e5a62b00000028f0ffffffffffffffffffffffffffda04000008bcfffffffffff44200000073ffffffffffffffffffffffffff5700000088ffffffffffffffe812000008e3ffffffffffffffffffffffea02000015f9ffffffffffffffff8100000080ffffffffffffffffffffff9c00000072ffffffffffffffffffe40100002fffffffffffffffffffffff51000000b8ffffffffffffffffffff2a000000e2ffffffffffffffffffff21000001f0ffffffffffffffffffff65000000b3fffffffffffffffffff602000018ffffffffffffffffffffff8b0000008affffffffffffffffffd200000036ffffffffffffffffffffffa900000063ffffffffffffffffffc00000004effffffffffffffffffffffc100000052ffffffffffffffffffb500000057ffffffffffffffffffffffc900000046ffffffffffffffffffa90000005fffffffffffffffffffffffd20000003affffffffffffffffffa900000060ffffffffffffffffffffffd30000003affffffffffffffffffb400000057ffffffffffffffffffffffca00000046ffffffffffffffffffc00000004effffffffffffffffffffffc100000052ffffffffffffffffffd100000037ffffffffffffffffffffffa900000063fffffffffffffffffff602000019ffffffffffffffffffffff8b00000089ffffffffffffffffffff21000001f1ffffffffffffffffffff66000000b3ffffffffffffffffffff50000000b8ffffffffffffffffffff2a000000e1ffffffffffffffffffff9c00000073ffffffffffffffffffe40100002fffffffffffffffffffffffea02000015f9ffffffffffffffff8200000080ffffffffffffffffffffffff5700000088ffffffffffffffe812000008e2ffffffffffffffffffffffffda04000008bcfffffffffff44300000073ffffffffffffffffffffffffffff830000000674d3f6e6a72b00000028f0ffffffffffffffffffffffffffffff60000000000000000000000016ddfffffffffffffffffffffffffffffffffe9309000000000000000048e6ffffffffffffffffffffffffffffffffffffffe88f3f1f07132e68c3fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9d7b28e69441f02000000afffffffffffffffffffffffffffffffffffff6300000000000000000000afffffffffffffffffffffffffffffffffffff6300000000000000000000afffffffffffffffffffffffffffffffffffff6a274c7095b9de64000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000afffffffffffffffffffffffffffffffffffffffffffffffffff67000000affffffffffffffffffffffffffffffffffffff7000000000000000000000000000000003bfffffffffffffffffffffffff7000000000000000000000000000000003bfffffffffffffffffffffffff7000000000000000000000000000000003bffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffd48b56271005142a5ea0f6ffffffffffffffffffffffffffffffffdb7c20000000000000000000001392feffffffffffffffffffffffffffff1f00000000000000000000000000004cf9ffffffffffffffffffffffffff1f0000003784c7e7f9e8b1480000000056ffffffffffffffffffffffffff1f015accffffffffffffffff9701000000b0ffffffffffffffffffffffff58caffffffffffffffffffffff770000003cfffffffffffffffffffffffffffffffffffffffffffffffffff107000002edffffffffffffffffffffffffffffffffffffffffffffffffff3a000000ccffffffffffffffffffffffffffffffffffffffffffffffffff4c000000baffffffffffffffffffffffffffffffffffffffffffffffffff32000000cbffffffffffffffffffffffffffffffffffffffffffffffffec05000002edffffffffffffffffffffffffffffffffffffffffffffffff8d00000039ffffffffffffffffffffffffffffffffffffffffffffffffeb140000009affffffffffffffffffffffffffffffffffffffffffffffff520000002afbffffffffffffffffffffffffffffffffffffffffffffff8c00000003c7ffffffffffffffffffffffffffffffffffffffffffffffb30300000085ffffffffffffffffffffffffffffffffffffffffffffffc50a0000005dfeffffffffffffffffffffffffffffffffffffffffffffd2110000004efbffffffffffffffffffffffffffffffffffffffffffffdb1800000042f8ffffffffffffffffffffffffffffffffffffffffffffe21f00000039f3ffffffffffffffffffffffffffffffffffffffffffffe92600000030efffffffffffffffffffffffffffffffffffffffffffffee2e00000029eafffffffffffffffffffffffffffffffffffffffffffff33700000022e5fffffffffffffffffffffffffffffffffffffffffffff7410000001cdffffffffffffffffffffffffffffffffffffffffffffffb4c00000017d9fffffffffffffffffffffffffffffffffffffffffffffd5900000012d2ffffffffffffffffffffffffffffffffffffffffffffff680000000ecbffffffffffffffffffffffffffffffffffffffffffffffef0000000000000000000000000000000000008bffffffffffffffffffffef0000000000000000000000000000000000008bffffffffffffffffffffef0000000000000000000000000000000000008bffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe2af8058392817060a1a3f74c8ffffffffffffffffffffffffffffffffeb0000000000000000000000000036cfffffffffffffffffffffffffffffeb000000000000000000000000000004a7ffffffffffffffffffffffffffeb00000f5a9dd0edfbf0ca841900000003c2ffffffffffffffffffffffffec3da8f9fffffffffffffffff0410000002bffffffffffffffffffffffffffffffffffffffffffffffffffee12000000cbffffffffffffffffffffffffffffffffffffffffffffffffff6900000090ffffffffffffffffffffffffffffffffffffffffffffffffff9600000078ffffffffffffffffffffffffffffffffffffffffffffffffff9a0000007effffffffffffffffffffffffffffffffffffffffffffffffff73000000a5fffffffffffffffffffffffffffffffffffffffffffffffff51b000009edfffffffffffffffffffffffffffffffffffffffffffffff7540000007efffffffffffffffffffffffffffffffffffffffffff3d3912400000055fcffffffffffffffffffffffffffffffffff1700000000000000001692feffffffffffffffffffffffffffffffffffff17000000000000002db8feffffffffffffffffffffffffffffffffffffff170000000000000000002bc3fffffffffffffffffffffffffffffffffffffffffffdf0cf922e00000003a5fffffffffffffffffffffffffffffffffffffffffffffffffd8700000007d1ffffffffffffffffffffffffffffffffffffffffffffffffff780000004ffffffffffffffffffffffffffffffffffffffffffffffffffff308000006f6ffffffffffffffffffffffffffffffffffffffffffffffffff3c000000d0ffffffffffffffffffffffffffffffffffffffffffffffffff4d000000c6ffffffffffffffffffffffffffffffffffffffffffffffffff35000000ddffffffffffffffffffffffffffffffffffffffffffffffffea0300000bf9ffffffffffffffffffffffffffffffffffffffffffffffff6200000054ffffffffffffffffffffff47bafefffffffffffffffffff56b00000002cbffffffffffffffffffffff0b001e71a9d7edfbf6e4ba771a000000007cffffffffffffffffffffffff0b0000000000000000000000000000017dffffffffffffffffffffffffff0b000000000000000000000000003cc8ffffffffffffffffffffffffffffe9b989593827160608162a5689dbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffbd0100000000f3fffffffffffffffffffffffffffffffffffffffffffff3200000000000f3ffffffffffffffffffffffffffffffffffffffffffff69000000000000f3ffffffffffffffffffffffffffffffffffffffffffbf01000b0e000000f3fffffffffffffffffffffffffffffffffffffffff42100008e1f000000f3ffffffffffffffffffffffffffffffffffffffff6a000035fc1f000000f3ffffffffffffffffffffffffffffffffffffffc0010004d1ff1f000000f3fffffffffffffffffffffffffffffffffffff42200007affff1f000000f3ffffffffffffffffffffffffffffffffffff6c000026f7ffff1f000000f3ffffffffffffffffffffffffffffffffffc1010001c1ffffff1f000000f3fffffffffffffffffffffffffffffffff523000066ffffffff1f000000f3ffffffffffffffffffffffffffffffff6d000019f0ffffffff1f000000f3ffffffffffffffffffffffffffffffc2010000aeffffffffff1f000000f3fffffffffffffffffffffffffffff524000052ffffffffffff1f000000f3ffffffffffffffffffffffffffff6e00000fe6ffffffffffff1f000000f3ffffffffffffffffffffffffffc30200009affffffffffffff1f000000f3fffffffffffffffffffffffff62400003ffeffffffffffffff1f000000f3ffffffffffffffffffffffff70000008daffffffffffffffff1f000000f3fffffffffffffffffffffff602000086ffffffffffffffffff1f000000f3fffffffffffffffffffffff3000000000000000000000000000000000000000000cbfffffffffffffff3000000000000000000000000000000000000000000cbfffffffffffffff3000000000000000000000000000000000000000000cbffffffffffffffffffffffffffffffffffffffffff1f000000f3ffffffffffffffffffffffffffffffffffffffffffffffffff1f000000f3ffffffffffffffffffffffffffffffffffffffffffffffffff1f000000f3ffffffffffffffffffffffffffffffffffffffffffffffffff1f000000f3ffffffffffffffffffffffffffffffffffffffffffffffffff1f000000f3ffffffffffffffffffffffffffffffffffffffffffffffffff1f000000f3ffffffffffffffffffffffffffffffffffffffffffffffffff1f000000f3ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff4f00000000000000000000000000002fffffffffffffffffffffffffffff4f00000000000000000000000000002fffffffffffffffffffffffffffff4f00000000000000000000000000002fffffffffffffffffffffffffffff4f00000fffffffffffffffffffffffffffffffffffffffffffffffffffff4f00000fffffffffffffffffffffffffffffffffffffffffffffffffffff4f00000fffffffffffffffffffffffffffffffffffffffffffffffffffff4f00000fffffffffffffffffffffffffffffffffffffffffffffffffffff4f00000fffffffffffffffffffffffffffffffffffffffffffffffffffff4f00000fffffffffffffffffffffffffffffffffffffffffffffffffffff4f00000fffffffffffffffffffffffffffffffffffffffffffffffffffff4f000008672f120514275997efffffffffffffffffffffffffffffffffff4f00000000000000000000000b73f6ffffffffffffffffffffffffffffff4f000000000000000000000000002bdeffffffffffffffffffffffffffff60538cbad2e7faf0d599370000000025ebffffffffffffffffffffffffffffffffffffffffffffffffa0090000005bffffffffffffffffffffffffffffffffffffffffffffffffffb100000001d2ffffffffffffffffffffffffffffffffffffffffffffffffff560000007effffffffffffffffffffffffffffffffffffffffffffffffffb80000003dffffffffffffffffffffffffffffffffffffffffffffffffffec00000022fffffffffffffffffffffffffffffffffffffffffffffffffffd00000011ffffffffffffffffffffffffffffffffffffffffffffffffffec00000022ffffffffffffffffffffffffffffffffffffffffffffffffffb80000003cffffffffffffffffffffffffffffffffffffffffffffffffff580000007dffffffffffffffffffffffffffffffffffffffffffffffffb301000000cfffffffffffffffffffffff4cb1fdffffffffffffffffffa40a00000058ffffffffffffffffffffffff17001a6ea9d7eefbf2d69b380000000024e8ffffffffffffffffffffffff1700000000000000000000000000002de0ffffffffffffffffffffffffff17000000000000000000000000127ef9ffffffffffffffffffffffffffffebba8a59372615050a1a3569a6f7ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffca753915050d233866a3e0ffffffffffffffffffffffffffffffffffd13f0000000000000000000000f7ffffffffffffffffffffffffffffff9d07000000000000000000000000f7ffffffffffffffffffffffffffff9700000000469fdbf3f5da9e490100f7ffffffffffffffffffffffffffca0300000eb3ffffffffffffffffd84df8fffffffffffffffffffffffffa2d000007c8ffffffffffffffffffffffffffffffffffffffffffffffff9100000081ffffffffffffffffffffffffffffffffffffffffffffffffff28000010f6ffffffffffffffffffffffffffffffffffffffffffffffffc20000006affffffffffffffffffffffffffffffffffffffffffffffffff79000000b2ffffffffffffffffffffffffffffffffffffffffffffffffff43000000ebffeb903d1a0616306fc0ffffffffffffffffffffffffffffff0f000015ffa211000000000000000041dcfffffffffffffffffffffffff30000003087000000000000000000000013c6ffffffffffffffffffffffe30000000f00000055beeef7d8881000000017e6ffffffffffffffffffffd30000000000019dffffffffffffe12200000056ffffffffffffffffffffd100000000006effffffffffffffffce04000002dbffffffffffffffffffdd0000000006eaffffffffffffffffff550000008bffffffffffffffffffe90000000043ffffffffffffffffffffa90000004dfffffffffffffffffff80200000074ffffffffffffffffffffdb0000002cffffffffffffffffffff2200000088ffffffffffffffffffffef00000019ffffffffffffffffffff4d00000088ffffffffffffffffffffee0000001affffffffffffffffffff7e00000074ffffffffffffffffffffdb0000002dffffffffffffffffffffcd00000042ffffffffffffffffffffa900000052ffffffffffffffffffffff21000005e9ffffffffffffffffff5400000093ffffffffffffffffffffff8f0000006dffffffffffffffffcd04000007e6fffffffffffffffffffffff9220000019effffffffffffe1230000006cffffffffffffffffffffffffffc00600000056beeff8d888110000002af3ffffffffffffffffffffffffffffa603000000000000000000000026ddffffffffffffffffffffffffffffffffc8280000000000000000025deffffffffffffffffffffffffffffffffffffffab25a2a1106193b7ed7ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff47000000000000000000000000000000000000f7ffffffffffffffffffff47000000000000000000000000000000000003faffffffffffffffffffff4700000000000000000000000000000000004afffffffffffffffffffffffffffffffffffffffffffffffffc1a000000adffffffffffffffffffffffffffffffffffffffffffffffffb300000015faffffffffffffffffffffffffffffffffffffffffffffffff5100000073ffffffffffffffffffffffffffffffffffffffffffffffffea05000000d6ffffffffffffffffffffffffffffffffffffffffffffffff8d00000039ffffffffffffffffffffffffffffffffffffffffffffffffff2c0000009dffffffffffffffffffffffffffffffffffffffffffffffffc90000000cf3ffffffffffffffffffffffffffffffffffffffffffffffff6700000063fffffffffffffffffffffffffffffffffffffffffffffffff60f000000c6ffffffffffffffffffffffffffffffffffffffffffffffffa300000029ffffffffffffffffffffffffffffffffffffffffffffffffff410000008cffffffffffffffffffffffffffffffffffffffffffffffffdf01000005e9ffffffffffffffffffffffffffffffffffffffffffffffff7d00000052fffffffffffffffffffffffffffffffffffffffffffffffffd1e000000b5ffffffffffffffffffffffffffffffffffffffffffffffffb90000001bfcffffffffffffffffffffffffffffffffffffffffffffffff570000007bffffffffffffffffffffffffffffffffffffffffffffffffee07000001ddffffffffffffffffffffffffffffffffffffffffffffffff9300000042ffffffffffffffffffffffffffffffffffffffffffffffffff31000000a5ffffffffffffffffffffffffffffffffffffffffffffffffd000000010f7ffffffffffffffffffffffffffffffffffffffffffffffff6d0000006bfffffffffffffffffffffffffffffffffffffffffffffffff913000000ceffffffffffffffffffffffffffffffffffffffffffffffffa900000031ffffffffffffffffffffffffffffffffffffffffffffffffff4700000094ffffffffffffffffffffffffffffffffffffffffffffffffe302000008eeffffffffffffffffffffffffffffffffffffffffffffffff840000005afffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9a8602c13050c1d4882dfffffffffffffffffffffffffffffffffffffa918000000000000000000025eeeffffffffffffffffffffffffffffff780000000000000000000000000023e5ffffffffffffffffffffffffff9f0000000037a8e4faf1c66d0500000033fdfffffffffffffffffffffff81600000065fdffffffffffffc40a0000009fffffffffffffffffffffffb600000021faffffffffffffffff8d00000047ffffffffffffffffffffff820000007bffffffffffffffffffeb01000014ffffffffffffffffffffff6d000000a2ffffffffffffffffffff15000001fdffffffffffffffffffff76000000a2ffffffffffffffffffff14000007ffffffffffffffffffffffa10000007bffffffffffffffffffec01000033ffffffffffffffffffffffec08000022fbffffffffffffffff8e00000087ffffffffffffffffffffffff7d00000068fdffffffffffffc70b00001ef2fffffffffffffffffffffffffb5500000039aae5fbf2c87006000013d0fffffffffffffffffffffffffffffe93160000000000000000000153e3ffffffffffffffffffffffffffffffffffbd2e000000000000000780f0ffffffffffffffffffffffffffffffffce3500000000000000000000000e87fcffffffffffffffffffffffffffb3060000004fb2e6faf0cd82150000004ffaffffffffffffffffffffffda0b000004a9ffffffffffffffe93600000076ffffffffffffffffffffff5600000084ffffffffffffffffffe80e000005e2fffffffffffffffffff606000008f4ffffffffffffffffffff6f0000008dffffffffffffffffffcb00000039ffffffffffffffffffffffac0000005cffffffffffffffffffbc0000004affffffffffffffffffffffbe0000004dffffffffffffffffffcc00000039ffffffffffffffffffffffac0000005effffffffffffffffffea00000008f4ffffffffffffffffffff6e0000007cffffffffffffffffffff2f00000085ffffffffffffffffffe70d000000c1ffffffffffffffffffff9300000004a9ffffffffffffffe83400000028fcfffffffffffffffffffffa2d0000000050b2e7fbf2cd821400000002b8ffffffffffffffffffffffffe523000000000000000000000000000299fffffffffffffffffffffffffffff16605000000000000000000002cc5ffffffffffffffffffffffffffffffffffe88e542512040b1b3d72c1fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8a259251008203f8be2ffffffffffffffffffffffffffffffffffffffa91d0000000000000000047ffaffffffffffffffffffffffffffffffff7b00000000000000000000000040f8ffffffffffffffffffffffffffff94000000004db9ecf7da8b1300000057ffffffffffffffffffffffffffdc050000008fffffffffffffe527000000acffffffffffffffffffffffff630000005fffffffffffffffffd406000025fbfffffffffffffffffffffb0c000002e0ffffffffffffffffff5f000000b2ffffffffffffffffffffc600000036ffffffffffffffffffffb50000005fffffffffffffffffffffa000000068ffffffffffffffffffffe700000011feffffffffffffffffff8d0000007cfffffffffffffffffffffb00000000dfffffffffffffffffff8c0000007cfffffffffffffffffffffb00000000b4ffffffffffffffffff9e00000069ffffffffffffffffffffe7000000008dffffffffffffffffffbe00000038ffffffffffffffffffffb6000000007bfffffffffffffffffff606000003e2ffffffffffffffffff62000000006fffffffffffffffffffff4f00000064ffffffffffffffffd8080000000062ffffffffffffffffffffc50000000096ffffffffffffe82b000000000064ffffffffffffffffffffff6c0000000051bbeff8dc8e1500001000000074fffffffffffffffffffffff94f0000000000000000000000288c00000084fffffffffffffffffffffffffd810b000000000000000052ea830000009fffffffffffffffffffffffffffffea8d471d090d2864c1ffff5b000000d4ffffffffffffffffffffffffffffffffffffffffffffffffff2100000dfdffffffffffffffffffffffffffffffffffffffffffffffffd900000052ffffffffffffffffffffffffffffffffffffffffffffffffff75000000b8ffffffffffffffffffffffffffffffffffffffffffffffffe30d000023fefffffffffffffffffffffffffffffffffffffffffffffff945000000b7ffffffffffffffffffffffffff7fa2fdffffffffffffffe8480000005effffffffffffffffffffffffffff63002080c4ecfae7c0740e00000034f4ffffffffffffffffffffffffffff6300000000000000000000000043f0ffffffffffffffffffffffffffffff6300000000000000000000118efdfffffffffffffffffffffffffffffffff4bb7f462b15040b25569ff4ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
-}
-void DrawDigitCharacter(RGBABitmapImage *image, double topx, double topy, double digit){
-  double x, y;
-  vector<wchar_t> *allCharData, *colorChars;
-  NumberReference *colorReference;
-  StringReference *errorMessage;
-  RGBA *color;
-
-  colorReference = new NumberReference();
-  errorMessage = new StringReference();
-  color = new RGBA();
-
-  colorChars = new vector<wchar_t> (2.0);
-
-  allCharData = DigitDataBase16();
-
-  for(y = 0.0; y < 37.0; y = y + 1.0){
-    for(x = 0.0; x < 30.0; x = x + 1.0){
-      colorChars->at(0) = allCharData->at(digit*30.0*37.0*2.0 + y*2.0*30.0 + x*2.0 + 0.0);
-      colorChars->at(1) = allCharData->at(digit*30.0*37.0*2.0 + y*2.0*30.0 + x*2.0 + 1.0);
-
-      ToUpperCase(colorChars);
-      CreateNumberFromStringWithCheck(colorChars, 16.0, colorReference, errorMessage);
-      color->r = colorReference->numberValue/255.0;
-      color->g = colorReference->numberValue/255.0;
-      color->b = colorReference->numberValue/255.0;
-      color->a = 1.0;
-      SetPixel(image, topx + x, topy + y, color);
-    }
-  }
-}
 vector<wchar_t> *GetPixelFontData(){
-  return toVector(L"0000000000000000000000000000001818000018181818181818000000000000000000363636360000006666ff6666ff666600000000187eff1b1f7ef8d8ff7e1800000e1bdb6e30180c76dbd87000007fc6cfd87070d8cccc6c38000000000000000000181c0c0e00000c1830303030303030180c000030180c0c0c0c0c0c0c183000000000995a3cff3c5a990000000000181818ffff1818180000000030181c1c00000000000000000000000000ffff000000000000000038380000000000000000006060303018180c0c0606030300003c66c3e3f3dbcfc7c3663c00007e181818181818187838180000ffc0c06030180c0603e77e00007ee70303077e070303e77e00000c0c0c0c0cffcc6c3c1c0c00007ee7030307fec0c0c0c0ff00007ee7c3c3c7fec0c0c0e77e000030303030180c06030303ff00007ee7c3c3e77ee7c3c3e77e00007ee70303037fe7c3c3e77e00000038380000383800000000000030181c1c00001c1c0000000000060c183060c06030180c0600000000ffff00ffff0000000000006030180c0603060c183060000018000018180c0603c3c37e00003f60cfdbd3ddc37e0000000000c3c3c3c3ffc3c3c3663c180000fec7c3c3c7fec7c3c3c7fe00007ee7c0c0c0c0c0c0c0e77e0000fccec7c3c3c3c3c3c7cefc0000ffc0c0c0c0fcc0c0c0c0ff0000c0c0c0c0c0c0fcc0c0c0ff00007ee7c3c3cfc0c0c0c0e77e0000c3c3c3c3c3ffc3c3c3c3c300007e1818181818181818187e00007ceec606060606060606060000c3c6ccd8f0e0f0d8ccc6c30000ffc0c0c0c0c0c0c0c0c0c00000c3c3c3c3c3c3dbffffe7c30000c7c7cfcfdfdbfbf3f3e3e300007ee7c3c3c3c3c3c3c3e77e0000c0c0c0c0c0fec7c3c3c7fe00003f6edfdbc3c3c3c3c3663c0000c3c6ccd8f0fec7c3c3c7fe00007ee70303077ee0c0c0e77e000018181818181818181818ff00007ee7c3c3c3c3c3c3c3c3c30000183c3c6666c3c3c3c3c3c30000c3e7ffffdbdbc3c3c3c3c30000c366663c3c183c3c6666c300001818181818183c3c6666c30000ffc0c060307e0c060303ff00003c3030303030303030303c00030306060c0c18183030606000003c0c0c0c0c0c0c0c0c0c3c000000000000000000c3663c18ffff00000000000000000000000000000000000000001838307000007fc3c37f03c37e000000000000fec3c3c3c3fec0c0c0c0c000007ec3c0c0c0c37e0000000000007fc3c3c3c37f030303030300007fc0c0fec3c37e0000000000003030303030fc303030331e7ec303037fc3c3c37e000000000000c3c3c3c3c3c3fec0c0c0c000001818181818181800001800386c0c0c0c0c0c0c0c00000c000000c6ccf8f0d8ccc6c0c0c0c000007e181818181818181818780000dbdbdbdbdbdbfe000000000000c6c6c6c6c6c6fc0000000000007cc6c6c6c6c67c00000000c0c0c0fec3c3c3c3fe000000000303037fc3c3c3c37f000000000000c0c0c0c0c0e0fe000000000000fe03037ec0c07f0000000000001c3630303030fc3030300000007ec6c6c6c6c6c6000000000000183c3c6666c3c3000000000000c3e7ffdbc3c3c3000000000000c3663c183c66c300000000c0606030183c6666c3000000000000ff6030180c06ff0000000000000f18181838f0381818180f181818181818181818181818180000f01818181c0f1c181818f0000000000000068ff160000000");
+  return toVector(L"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000110000001100000000000000000000001100000011000000110000001100000011000000110000001100000000000000000000000000000000000000000000000000000000000000000000000000001101100011011000110110001101100000000000000000000000000011001100110011011111111011001100110011011111111011001100110011000000000000000000000000000000000000110000111111011111111110110001111100001111110000111110001101111111111011111100001100000000000000000000111000011011000110110110111011000001100000110000011000001101110110110110001101100001110000000000000000011111110011000111111001100011011000011100000111000011011001100110011001100110110000111000000000000000000000000000000000000000000000000000000000000000000000000000001100000111000001100000111000000000000000000000011000000011000000011000000110000001100000011000000110000001100000011000001100000110000000000000000000000001100000110000011000000110000001100000011000000110000001100000011000000011000000011000000000000000000000000000000000010011001010110100011110011111111001111000101101010011001000000000000000000000000000000000000000000011000000110000001100011111111111111110001100000011000000110000000000000000000000000000000000000001100000110000011100000111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001111111111111111000000000000000000000000000000000000000000000000000000000000000000011100000111000000000000000000000000000000000000000000000000000000000000000000000000000000011000000110000011000000110000011000000110000011000000110000011000000110000011000000110000000000000000000000001111000110011011000011110001111100111111011011111100111110001111000011011001100011110000000000000000000111111000011000000110000001100000011000000110000001100000011000000111100001110000011000000000000000000011111111000000110000001100000110000011000001100000110000011000001100000011100111011111100000000000000000011111101110011111000000110000001110000001111110111000001100000011000000111001110111111000000000000000000011000000110000001100000011000000110000111111110011001100110110001111000011100000110000000000000000000001111110111001111100000011000000111000000111111100000011000000110000001100000011111111110000000000000000011111101110011111000011110000111110001101111111000000110000001100000011111001110111111000000000000000000000110000001100000011000000110000011000001100000110000011000000110000001100000011111111000000000000000001111110111001111100001111000011111001110111111011100111110000111100001111100111011111100000000000000000011111101110011111000000110000001100000011111110111001111100001111000011111001110111111000000000000000000000000000011100000111000000000000000000000111000001110000000000000000000000000000000000000000000000000000001100000110000011100000111000000000000000000000111000001110000000000000000000000000000000000000000000011000000011000000011000000011000000011000000011000001100000110000011000001100000110000000000000000000000000000000000000111111111111111100000000111111111111111100000000000000000000000000000000000000000000000000000110000011000001100000110000011000001100000001100000001100000001100000001100000001100000000000000000000110000000000000000000000110000001100000110000011000001100000011000011110000110111111000000000000000001111110000000110111100111101101111001011101110111100001101111110000000000000000000000000000000000000000011000011110000111100001111000011111111111100001111000011110000110110011000111100000110000000000000000000011111111110001111000011110000111110001101111111111000111100001111000011111000110111111100000000000000000111111011100111000000110000001100000011000000110000001100000011000000111110011101111110000000000000000000111111011100111110001111000011110000111100001111000011110000111110001101110011001111110000000000000000111111110000001100000011000000110000001100111111000000110000001100000011000000111111111100000000000000000000001100000011000000110000001100000011000000110011111100000011000000110000001111111111000000000000000001111110111001111100001111000011111100110000001100000011000000110000001111100111011111100000000000000000110000111100001111000011110000111100001111111111110000111100001111000011110000111100001100000000000000000111111000011000000110000001100000011000000110000001100000011000000110000001100001111110000000000000000000111110011101110110001101100000011000000110000001100000011000000110000001100000011000000000000000000000110000110110001100110011000110110000111100000111000011110001101100110011011000111100001100000000000000001111111100000011000000110000001100000011000000110000001100000""01100000011000000110000001100000000000000001100001111000011110000111100001111000011110000111101101111111111111111111110011111000011000000000000000011100011111000111111001111110011111110111101101111011111110011111100111111000111110001110000000000000000011111101110011111000011110000111100001111000011110000111100001111000011111001110111111000000000000000000000001100000011000000110000001100000011011111111110001111000011110000111110001101111111000000000000000011111100011101101111101111011011110000111100001111000011110000111100001101100110001111000000000000000000110000110110001100110011000110110000111101111111111000111100001111000011111000110111111100000000000000000111111011100111110000001100000011100000011111100000011100000011000000111110011101111110000000000000000000011000000110000001100000011000000110000001100000011000000110000001100000011000111111110000000000000000011111101110011111000011110000111100001111000011110000111100001111000011110000111100001100000000000000000001100000111100001111000110011001100110110000111100001111000011110000111100001111000011000000000000000011000011111001111111111111111111110110111101101111000011110000111100001111000011110000110000000000000000110000110110011001100110001111000011110000011000001111000011110001100110011001101100001100000000000000000001100000011000000110000001100000011000000110000011110000111100011001100110011011000011000000000000000011111111000000110000001100000110000011000111111000110000011000001100000011000000111111110000000000000000001111000000110000001100000011000000110000001100000011000000110000001100000011000011110000000000110000001100000001100000011000000011000000110000000110000001100000001100000011000000011000000110000000000000000000111100001100000011000000110000001100000011000000110000001100000011000000110000001111000000000000000000000000000000000000000000000000000000000000000000000000001100001101100110001111000001100011111111111111110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000110000001110000001100000011100000000000000000111111101100001111000011111111101100000011000011011111100000000000000000000000000000000000000000000000000111111111000011110000111100001111000011011111110000001100000011000000110000001100000011000000000000000001111110110000110000001100000011000000111100001101111110000000000000000000000000000000000000000000000000111111101100001111000011110000111100001111111110110000001100000011000000110000001100000000000000000000001111111000000011000000110111111111000011110000110111111000000000000000000000000000000000000000000000000000001100000011000000110000001100000011000011111100001100000011000000110011001100011110000111111011000011110000001100000011111110110000111100001111000011011111100000000000000000000000000000000000000000000000001100001111000011110000111100001111000011110000110111111100000011000000110000001100000011000000000000000000011000000110000001100000011000000110000001100000011000000000000000000000011000000000000001110000110110001100000011000000110000001100000011000000110000001100000000000000000000001100000000000000000000000000000110001100110011000111110000111100011011001100110110001100000011000000110000001100000011000000000000000001111110000110000001100000011000000110000001100000011000000110000001100000011000000111100000000000000000110110111101101111011011110110111101101111011011011111110000000000000000000000000000000000000000000000000110001101100011011000110110001101100011011000110011111100000000000000000000000000000000000000000000000000111110011000110110001101100011011000110110001100111110000000000000000000000000000000000000001100000011000000110111111111000011110000111100001111000011011111110000000000000000000000000000000011000000110000001100000011111110110000111100001111000011110000111111111000000000000000000000000000000000000000000000000000000011000000110000001100000011000000110000011101111111000000000000000000000000000000000000000000000000011111111100000011000000011111100000001100000011111111100000000000000000000000000000000000000000000000000011100001101100000011000000110000001100000011000011111100001100000011000000110000000000000000000000000001111110011000110110001101100011011000110110001101100011000000000000000000000000000000000000000000000000000110000011110000111100011001100110011011000011110000110000000000000000000000000000000000000000000000001100001111100111111111111101101111000011110000111100001100000000000000000000000000000000000000000000000011000011011001100011110000011000001111000110011011000011000000000000000000000000000000000000001100000110000001100000110000011000001111000110011001100110110000110000000000000000000000000000000000000000000000001111111100000110000011000001100000110000011000001111111100000000000000000000000000000000000000000000000011110000000110000001100000011000000111000000111100011100000110000001100000011000111100000001100000011000000110000001100000011000000110000001100000011000000110000001100000011000000110000001100000000000000000000000111100011000000110000001100000111000111100000011100000011000000110000001100000001111");
 }
 void DrawAsciiCharacter(RGBABitmapImage *image, double topx, double topy, wchar_t a, RGBA *color){
-  double index, x, y, row, pixel;
-  vector<wchar_t> *allCharData, *charData, *rowData;
-  NumberReference *rowReference;
-  StringReference *errorMessage;
-
-  rowReference = new NumberReference();
-  errorMessage = new StringReference();
+  double index, x, y, pixel, basis, ybasis;
+  vector<wchar_t> *allCharData;
 
   index = a;
   index = index - 32.0;
   allCharData = GetPixelFontData();
-  charData = Substring(allCharData, index*2.0*13.0, (index + 1.0)*2.0*13.0);
+
+  basis = index*8.0*13.0;
 
   for(y = 0.0; y < 13.0; y = y + 1.0){
-    rowData = Substring(charData, y*2.0, (y + 1.0)*2.0);
-    ToUpperCase(rowData);
-    CreateNumberFromStringWithCheck(rowData, 16.0, rowReference, errorMessage);
-    row = rowReference->numberValue;
+    ybasis = basis + y*8.0;
     for(x = 0.0; x < 8.0; x = x + 1.0){
-      pixel = fmod(floor(row/pow(2.0, x)), 2.0);
-      if(pixel == 1.0){
+      pixel = allCharData->at(ybasis + x);
+      if(pixel == '1'){
         DrawPixel(image, topx + 8.0 - 1.0 - x, topy + 13.0 - 1.0 - y, color);
       }
     }
